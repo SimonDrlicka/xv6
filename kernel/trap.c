@@ -9,6 +9,8 @@
 struct spinlock tickslock;
 uint ticks;
 
+extern int page_reference[];
+
 extern char trampoline[], uservec[], userret[];
 
 // in kernelvec.S, calls kerneltrap().
@@ -65,7 +67,45 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  } else if((r_scause() == 15)) {
+    // store/AMO page fault
+    uint64 va = PGROUNDDOWN(r_stval());
+    if (va >= MAXVA) {
+      p->killed = 1;
+      goto err;
+    }
+    // printf("%p\n", va);
+    pte_t * pte = walk(p->pagetable, va, 0);
+    uint64 pa = PTE2PA(*pte);
+    uint flags = PTE_FLAGS(*pte);
+    if ((flags | PTE_COW) == 0) {
+      panic("usertrap: page fault of unshared page");
+    }
+
+    // set flags for new page
+    flags &= ~PTE_COW;
+    flags |= PTE_W;
+    
+    dec_ref((void*)pa);
+    char *mem;
+    if((mem = kalloc()) == 0) {
+      p->killed = 1;
+      goto err;
+    }
+    memmove(mem, (char*)pa, PGSIZE);
+    // printf("%x\n", *pte);
+    uvmunmap(p->pagetable, va, 1, 1);
+    // printf("reach here\n");
+    // printf("%p\n", pte);
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
+      kfree(mem);
+      uvmunmap(p->pagetable, va, 1, 0);
+      panic("usertrap: mappages fault");
+    }
+
+
+  
+  }else if((which_dev = devintr()) != 0){
     // ok
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
@@ -73,8 +113,9 @@ usertrap(void)
     setkilled(p);
   }
 
-  if(killed(p))
-    exit(-1);
+  err:
+    if(killed(p))
+        exit(-1);
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)

@@ -21,11 +21,21 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+  uint64 *cntref;
 } kmem;
 
 void
 kinit()
 {
+  int frames = 0;
+  uint64 addr = PGROUNDUP((uint64)end);
+
+  kmem.cntref = (uint64*)addr;
+  while(addr < PHYSTOP){
+    kmem.cntref[PA2IND(addr)] = 1;
+    addr += PGSIZE;
+    frames++;
+  }
   initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
 }
@@ -79,4 +89,19 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+void dec_ref(void* pa){
+  acquire(&kmem.lock);
+
+  if(kmem.cntref[ PA2IND(pa)] == 0) kfree(pa);
+  else{
+    kmem.cntref[PA2IND(pa)]--;
+  }
+    release(&kmem.lock);
+}
+
+void inc_ref(void* pa){
+
+  kmem.cntref[PA2IND(pa)]++;
 }

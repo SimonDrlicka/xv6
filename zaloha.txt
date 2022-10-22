@@ -5,10 +5,6 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-#include "spinlock.h"
-#include "proc.h"
-
-extern int page_reference[];
 
 /*
  * the kernel's page table.
@@ -317,30 +313,35 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
+    if((*pte & PTE_V) == 0) //musi existovat stranka s datami
       panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);//ziskanie fyzickej adresy
+      pa = PTE2PA(*pte);//ziskanie fyzickej adresy
     if(*pte & PTE_W){
       *pte &=~PTE_W;
-      *pte |= PTE_COW;
+      *pte|= PTE_COW;
     }
-
 
     flags = PTE_FLAGS(*pte);
     //if((mem = kalloc()) == 0)
     //  goto err;
     //memmove(mem, (char*)pa, PGSIZE);
-    inc_ref((void*)pa);
+    //zmena z mem na pa
+    //potreba pridat novy priznak, aby sme vedeli ci tam predtym bol ptw.
+    //vyuzijeme na to reserved bity
+    //potrebne definovat pte_cow
+    //
     if(mappages(new, i, PGSIZE, pa, flags) != 0){
       //kfree(mem);
       goto err;
     }
 
+    // HINT: je potrebne navysit referencie fyzickej stranky
   }
   return 0;
 
  err:
-  //uvmunmap(new, 0, i / PGSIZE, 1);
+  uvmunmap(new, 0, i / PGSIZE, 1);
+  // TODO: odstranit PTE_W priznaky
   return -1;
 }
 
@@ -370,32 +371,6 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
-    pte_t * pte = walk(pagetable, va0, 0);
-    uint64 pa = PTE2PA(*pte);
-    uint flags = PTE_FLAGS(*pte);
-    if (flags | PTE_COW) {
-
-      flags &= ~PTE_COW;
-      flags |= PTE_W;
-
-      char *mem;
-      if((mem = kalloc()) == 0) {
-        return -1;
-        // it should kill, but kill does not pass the usertests
-        // just return will be fine, think as it cannot copy those bytes
-        myproc()->killed = 1;
-        goto err;
-      }
-      memmove(mem, (char*)pa, PGSIZE);
-      uvmunmap(pagetable, va0, 1, 1);
-      if(mappages(pagetable, va0, PGSIZE, (uint64)mem, flags) != 0){
-        kfree(mem);
-        uvmunmap(pagetable, va0, 1, 0);
-        panic("copyout: mappages fault");
-      }
-      pa0 = (uint64)mem;
-      dec_ref((void*)pa0); 
-    }
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -406,11 +381,6 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     dstva = va0 + PGSIZE;
   }
   return 0;
-
-  err:
-    if(myproc()->killed)
-      exit(-1);
-    return -1;
 }
 
 // Copy from user to kernel.
