@@ -63,13 +63,12 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
-void            dec_ref(void*);
-void            inc_ref(void*);
-
+void            inc_ref(uint64);
+int             dec_ref(void*);
 // log.c
 void            initlog(int, struct superblock*);
 void            log_write(struct buf*);
-void            begin_op(void);
+void begin_op(void);
 void            end_op(void);
 
 // pipe.c

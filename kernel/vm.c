@@ -330,7 +330,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     //if((mem = kalloc()) == 0)
     //  goto err;
     //memmove(mem, (char*)pa, PGSIZE);
-    inc_ref((void*)pa);
+    //inc_ref((uint64)pa);
+    page_reference[pa >>12] +=1;
     if(mappages(new, i, PGSIZE, pa, flags) != 0){
       //kfree(mem);
       goto err;
@@ -394,7 +395,6 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
         panic("copyout: mappages fault");
       }
       pa0 = (uint64)mem;
-      dec_ref((void*)pa0); 
     }
     n = PGSIZE - (dstva - va0);
     if(n > len)
