@@ -46,10 +46,8 @@ usertrap(void)
   w_stvec((uint64)kernelvec);
 
   struct proc *p = myproc();
-  
   // save user program counter.
-  p->trapframe->epc = r_sepc();
-  
+  p->trapframe->epc = r_sepc(); 
   if(r_scause() == 8){
     // system call
 
@@ -65,6 +63,10 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 15){
+    if(uvmcow(r_stval(), p->pagetable)){
+      setkilled(p);
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

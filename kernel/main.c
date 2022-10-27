@@ -17,7 +17,9 @@ main()
     printf("xv6 kernel is booting\n");
     printf("\n");
     kinit();         // physical page allocator
+    printf("after kinit\n");
     kvminit();       // create kernel page table
+    printf("after kvm");
     kvminithart();   // turn on paging
     procinit();      // process table
     trapinit();      // trap vectors
@@ -28,7 +30,9 @@ main()
     iinit();         // inode table
     fileinit();      // file table
     virtio_disk_init(); // emulated hard disk
+    printf("before user\n");
     userinit();      // first user process
+    printf("after user init\n");
     __sync_synchronize();
     started = 1;
   } else {

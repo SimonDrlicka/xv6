@@ -20,10 +20,11 @@ pagetable_t
 kvmmake(void)
 {
   pagetable_t kpgtbl;
-
+  printf("kv make before\n");
   kpgtbl = (pagetable_t) kalloc();
+  printf("after kalloc kvmake \n");
   memset(kpgtbl, 0, PGSIZE);
-
+  printf("memset after\n");
   // uart registers
   kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
@@ -45,7 +46,7 @@ kvmmake(void)
 
   // allocate and map a kernel stack for each process.
   proc_mapstacks(kpgtbl);
-  
+
   return kpgtbl;
 }
 
@@ -308,7 +309,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  //char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -316,20 +317,53 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    if((*pte & PTE_W)){
+      *pte &= ~PTE_W;
+      *pte |= PTE_COW;
+    }
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      //kfree(mem);
       goto err;
     }
+    inc_ref((uint64)pa);
   }
   return 0;
 
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+}
+
+int
+uvmcow(uint64 addr, pagetable_t pagetable){
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *mem = 0;
+
+  if((pte = walk(pagetable, addr, 0)) == 0)
+    return -1;
+  if((*pte & PTE_V) == 0)
+    return -1;
+  if((*pte & PTE_COW) == 0)
+    return -1;
+  if((mem = kalloc()) == 0)
+    return -1;
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+  flags &= ~PTE_COW;
+  flags |= PTE_W;
+  memmove(mem, (char*)pa, PGSIZE);
+  if(get_pa((uint64)pa) == 1)
+    uvmunmap(pagetable, PGROUNDDOWN(addr), PGSIZE, 1);
+  else
+    uvmunmap(pagetable, PGROUNDDOWN(addr), PGSIZE, 0);
+  if(mappages(pagetable, PGROUNDDOWN(addr), PGSIZE, (uint64)mem, flags) != 0){
+    kfree(mem);
+    return -1;
+  }
+  return 0;
 }
 
 // mark a PTE invalid for user access.
@@ -351,18 +385,32 @@ uvmclear(pagetable_t pagetable, uint64 va)
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
-  uint64 n, va0, pa0;
+  uint64 va0, pa0;
+  //uint64 flags;
+  uint64 n;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+    if(va0 >= MAXVA)
       return -1;
+
+    pte_t *pte = walk(pagetable, va0, 0);
+    if(pte == 0)
+      return -1;
+    if((*pte & PTE_V) == 0)
+      return -1;
+    if((*pte & PTE_U) == 0)
+      return -1;
+    if(*pte & PTE_COW) {
+      if(uvmcow(va0, pagetable) != 0){
+        panic("uncow");
+      }
+    }
+    pa0 = walkaddr(pagetable, va0);
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
     memmove((void *)(pa0 + (dstva - va0)), src, n);
-
     len -= n;
     src += n;
     dstva = va0 + PGSIZE;

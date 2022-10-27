@@ -77,6 +77,7 @@ int
 holding(struct spinlock *lk)
 {
   int r;
+  //printf("holding\n");
   r = (lk->locked && lk->cpu == mycpu());
   return r;
 }
